@@ -115,6 +115,55 @@ public:
     void keyBackClicked() override { this->ccTouchCancelled(nullptr, nullptr); }
 };
 
+// Sits on top of the scene and reads the finished frame once, after everything else has drawn.
+class EyedropperCapture : public CCNode {
+protected:
+    std::function<void(CCImage*)> m_done;
+    bool m_captured = false;
+
+public:
+    static EyedropperCapture* create(std::function<void(CCImage*)> done) {
+        auto ret = new EyedropperCapture();
+        ret->m_done = std::move(done);
+        ret->autorelease();
+        return ret;
+    }
+
+    void visit() override {
+        CCNode::visit();
+        if (m_captured) return;
+        m_captured = true;
+
+        auto frame = CCDirector::get()->getOpenGLView()->getFrameSize();
+        int w = static_cast<int>(frame.width);
+        int h = static_cast<int>(frame.height);
+
+        std::vector<uint8_t> px(static_cast<size_t>(w) * h * 4);
+        std::vector<uint8_t> flipped(px.size());
+        glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+
+        // glReadPixels is bottom-up; flip to top-down and force full alpha.
+        for (int y = 0; y < h; y++) {
+            auto src = px.data() + static_cast<size_t>(h - 1 - y) * w * 4;
+            auto dst = flipped.data() + static_cast<size_t>(y) * w * 4;
+            std::memcpy(dst, src, static_cast<size_t>(w) * 4);
+            for (int x = 0; x < w; x++) dst[x * 4 + 3] = 255;
+        }
+
+        auto img = new CCImage();
+        img->initWithImageData(flipped.data(), static_cast<int>(flipped.size()),
+                               CCImage::kFmtRawData, w, h, 8);
+
+        Ref<EyedropperCapture> self = this;
+        auto cb = m_done;
+        Loader::get()->queueInMainThread([self, img, cb]() {
+            self->removeFromParentAndCleanup(true);
+            if (cb) cb(img);
+        });
+    }
+};
+
 class $modify(EyedropperColorPopup, ColorSelectPopup) {
     bool init(EffectGameObject* obj, CCArray* objs, ColorAction* action) {
         if (!ColorSelectPopup::init(obj, objs, action)) return false;
@@ -123,7 +172,7 @@ class $modify(EyedropperColorPopup, ColorSelectPopup) {
         auto btn = CCMenuItemSpriteExtra::create(spr, this, menu_selector(EyedropperColorPopup::onEyedropper));
         btn->setID("eyedropper-button"_spr);
 
-        // Bottom-left corner of the popup
+        // Bottom-right corner of the popup
         auto size = m_mainLayer->getContentSize();
         auto world = m_mainLayer->convertToWorldSpace({size.width - 55.f, 25.f});
         btn->setPosition(m_buttonMenu->convertToNodeSpace(world));
@@ -133,7 +182,6 @@ class $modify(EyedropperColorPopup, ColorSelectPopup) {
 
     void onEyedropper(CCObject*) {
         auto scene = CCDirector::get()->getRunningScene();
-        auto win = CCDirector::get()->getWinSize();
 
         // Hide every popup (this one and the Edit Object page behind it)
         std::vector<std::pair<Ref<CCNode>, bool>> hidden;
@@ -147,28 +195,24 @@ class $modify(EyedropperColorPopup, ColorSelectPopup) {
             for (auto const& [node, vis] : hidden) node->setVisible(vis);
         };
 
-        // Capture the editor as it looks underneath
-        auto rt = CCRenderTexture::create(win.width, win.height);
-        rt->begin();
-        scene->visit();
-        rt->end();
-
-        auto img = rt->newCCImage(true);
-        if (!img) { restore(); return; }
-        auto tex = new CCTexture2D();
-        tex->initWithImage(img);
-        tex->autorelease();
-
         Ref<EyedropperColorPopup> self = this;
-        auto layer = EyedropperLayer::create(img, tex,
-            [self, restore](ccColor3B c) {
-                restore();
-                self->m_colorPicker->setColorValue(c);
-                self->colorValueChanged(c);
-            },
-            [restore]() { restore(); }
-        );
-        img->release(); // layer holds its own Ref
-        scene->addChild(layer, 99999);
+        auto capture = EyedropperCapture::create([self, restore](CCImage* img) {
+            auto tex = new CCTexture2D();
+            tex->initWithImage(img);
+            tex->autorelease();
+
+            auto layer = EyedropperLayer::create(img, tex,
+                [self, restore](ccColor3B c) {
+                    restore();
+                    self->m_colorPicker->setColorValue(c);
+                    self->colorValueChanged(c);
+                },
+                [restore]() { restore(); }
+            );
+            img->release(); // layer holds its own Ref
+            if (!layer) { restore(); return; }
+            CCDirector::get()->getRunningScene()->addChild(layer, 99999);
+        });
+        scene->addChild(capture, 100000);
     }
 };
