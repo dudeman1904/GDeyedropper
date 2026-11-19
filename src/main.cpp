@@ -124,7 +124,8 @@ class $modify(EyedropperColorPopup, ColorSelectPopup) {
         btn->setID("eyedropper-button"_spr);
 
         // Bottom-left corner of the popup
-        auto world = m_mainLayer->convertToWorldSpace({55.f, 25.f});
+        auto size = m_mainLayer->getContentSize();
+        auto world = m_mainLayer->convertToWorldSpace({size.width - 55.f, 25.f});
         btn->setPosition(m_buttonMenu->convertToNodeSpace(world));
         m_buttonMenu->addChild(btn);
         return true;
