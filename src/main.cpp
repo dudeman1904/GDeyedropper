@@ -134,27 +134,38 @@ class $modify(EyedropperColorPopup, ColorSelectPopup) {
         auto scene = CCDirector::get()->getRunningScene();
         auto win = CCDirector::get()->getWinSize();
 
-        // Hide the popup and capture the editor as it looks underneath.
-        this->setVisible(false);
+        // Hide every popup (this one and the Edit Object page behind it)
+        std::vector<std::pair<Ref<CCNode>, bool>> hidden;
+        for (auto child : CCArrayExt<CCNode*>(scene->getChildren())) {
+            if (typeinfo_cast<FLAlertLayer*>(child)) {
+                hidden.push_back({Ref<CCNode>(child), child->isVisible()});
+                child->setVisible(false);
+            }
+        }
+        auto restore = [hidden]() {
+            for (auto const& [node, vis] : hidden) node->setVisible(vis);
+        };
+
+        // Capture the editor as it looks underneath
         auto rt = CCRenderTexture::create(win.width, win.height);
         rt->begin();
         scene->visit();
         rt->end();
 
         auto img = rt->newCCImage(true);
-        if (!img) { this->setVisible(true); return; }
+        if (!img) { restore(); return; }
         auto tex = new CCTexture2D();
         tex->initWithImage(img);
         tex->autorelease();
 
         Ref<EyedropperColorPopup> self = this;
         auto layer = EyedropperLayer::create(img, tex,
-            [self](ccColor3B c) {
-                self->setVisible(true);
+            [self, restore](ccColor3B c) {
+                restore();
                 self->m_colorPicker->setColorValue(c);
                 self->colorValueChanged(c);
             },
-            [self]() { self->setVisible(true); }
+            [restore]() { restore(); }
         );
         img->release(); // layer holds its own Ref
         scene->addChild(layer, 99999);
