@@ -46,6 +46,17 @@ jobs:
           name: Build Output
           path: ${{ steps.build.outputs.build-output }}
 
+      - name: Collect .geode file
+        shell: bash
+        run: |
+          mkdir -p release
+          find "$GITHUB_WORKSPACE" -name '*.geode' -not -path "$GITHUB_WORKSPACE/release/*" -exec cp {} release/ \;
+          ls -la release
+          if ! ls release/*.geode > /dev/null 2>&1; then
+            echo "No .geode file found"
+            exit 1
+          fi
+
       - name: Publish release
         if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
@@ -54,4 +65,4 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: Editor Eyedropper ${{ steps.ver.outputs.version }}
           make_latest: true
-          files: ${{ steps.build.outputs.build-output }}
+          files: release/*.geode
